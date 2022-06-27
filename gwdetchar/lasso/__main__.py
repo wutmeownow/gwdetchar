@@ -567,7 +567,6 @@ def main(args=None):
     range_is_primary = 'EFFECTIVE_RANGE_MPC' in args.primary_channel
     if args.primary_cache is not None:
         LOGGER.info("Using custom primary cache file")
-    # not reading primary channel from file
     elif args.primary_frametype is None and args.primary_file is None:
         try:
             args.primary_frametype = DEFAULT_FRAMETYPE[
