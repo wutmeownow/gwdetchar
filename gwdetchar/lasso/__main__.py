@@ -22,9 +22,9 @@ import re
 import sys
 
 from gwpy.timeseries import TimeSeries
-
 from gwpy.segments import DataQualityFlag
-from gwpy.segments import Segment
+from gwpy.detector import ChannelList
+from gwpy.io import nds2 as io_nds2
 
 import numpy
 
@@ -37,15 +37,12 @@ from sklearn.preprocessing import scale
 
 from pandas import set_option
 
-from gwpy.detector import ChannelList
-from gwpy.io import nds2 as io_nds2
+from matplotlib import (use, rcParams)
+use('Agg')
 
 from .. import (cli, lasso as gwlasso)
 from ..io.datafind import get_data
 from ..io import html as htmlio
-
-from matplotlib import (use, rcParams)
-use('Agg')
 
 # backend-dependent imports
 from matplotlib.cm import get_cmap  # noqa: E402
@@ -295,7 +292,7 @@ def get_active_segs(start, end, dq_flag):
     Get active flag segments for the ifo
     - used for getting primary & aux channel data
     """
-    LOGGER.debug(f"Querying data quality flag {dq_flag}")
+    LOGGER.info(f"Querying data quality flag {dq_flag}")
     active_times = DataQualityFlag.query(dq_flag, start, end).active
     active_times = [span for span in active_times if span[1] - span[0] > 180]
     # list segs for logger msg
