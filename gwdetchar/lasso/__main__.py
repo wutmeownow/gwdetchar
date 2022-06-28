@@ -286,18 +286,17 @@ def get_primary_ts(channel, start, end, active_segs,
                                format='gwf',
                                verbose='Reading primary:'.rjust(30),
                                nproc=nproc)
-    else:
-        return primary_stitch(channel, frametype,
-                              active_segs, cache, nproc)
+    return primary_stitch(channel, frametype,
+                          active_segs, cache, nproc)
 
 
-def get_active_segs(start, end, ifo):
+def get_active_segs(start, end, dq_flag):
     """
     Get active flag segments for the ifo
     - used for getting primary & aux channel data
     """
-    usable_flag = f"{ifo}:DMT-ANALYSIS_READY:1"
-    active_times = DataQualityFlag.query(usable_flag, start, end).active
+    LOGGER.debug(f"Querying data quality flag {dq_flag}")
+    active_times = DataQualityFlag.query(dq_flag, start, end).active
     active_times = [span for span in active_times if span[1] - span[0] > 180]
     # list segs for logger msg
     seg_table = Table(data=([span[0] for span in active_times],
@@ -313,7 +312,7 @@ def get_active_segs(start, end, ifo):
 def primary_stitch(primary_channel, primary_frametype,
                    active_segs, cache, nproc):
     """
-    Get primary channel data for active flag segments, 
+    Get primary channel data for active flag segments,
     then add them into one TimeSeries
     """
     primary_values = []
@@ -331,9 +330,10 @@ def primary_stitch(primary_channel, primary_frametype,
     LOGGER.debug('----Primary channel data finished----')
     new_start = float(active_segs[0].start)
     if trend_type == "second":
-        new_end = new_start+len(primary_values)
+        dt = 1
     else:
-        new_end = new_start+60*len(primary_values)
+        dt = 60
+    new_end = new_start+dt*len(primary_values)
     times = numpy.linspace(new_start, new_end, len(primary_values))
     return TimeSeries(primary_values, times=times)
 
@@ -467,6 +467,12 @@ def create_parser():
         default=0.0001,
         help='threshold for making a plot',
     )
+    parser.add_argument(
+        '-d',
+        '--data-quality-flag',
+        default='{IFO}:DMT-ANALYSIS_READY:1',
+        help='data quality flag to retrieve active segments by',
+    )
 
     # signal processing arguments
     psig.add_argument(
@@ -583,8 +589,12 @@ def main(args=None):
     # multiprocessing for plots
     nprocplot = (args.nproc_plot or args.nproc) if USETEX else 1
 
+    # fill in IFO for dq flag default arg
+    if args.data_quality_flag == '{IFO}:DMT-ANALYSIS_READY:1':
+        args.data_quality_flag = args.data_quality_flag.format(IFO=args.ifo)
+
     # get active segments for primary and aux stitching
-    active_segs = get_active_segs(start, end, args.ifo)
+    active_segs = get_active_segs(start, end, args.data_quality_flag)
 
     # bandpass primary
     if args.band_pass:
