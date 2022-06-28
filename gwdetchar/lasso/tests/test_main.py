@@ -44,6 +44,7 @@ def test_read(expected_ts, expected_ts_file):
         channel=TEST_CHANNEL,
         start=TEST_START,
         end=TEST_END,
+        active_segs=None,
         cache=None,
         nproc=1)
     assert actual_ts.t0 == expected_ts.t0
