@@ -562,6 +562,9 @@ def main(args=None):
     line_size_primary = args.line_size_primary
     threshold = args.threshold
     trend_type = args.trend_type
+    
+    # suppress warnings
+    warnings.simplefilter("ignore")
 
     # let's go
     LOGGER.info('{} Lasso correlations {}-{}'.format(args.ifo, start, end))
@@ -871,13 +874,21 @@ def main(args=None):
     page.h1(title, class_='pb-2 mt-3 mb-2 border-bottom')
 
     # -- summary table
+    if args.remove_outliers:
+        outlierremove = '%s sigma' % args.remove_outliers
+    elif args.remove_outliers_pf:
+        percentoutlier = args.remove_outliers_pf * 100
+        outlierremove = '%s percent' % percentoutlier
+    else:
+        outlierremove = 'None'
+
     content = [
         ('Primary channel', markup.oneliner.code(primary)),
         ('Primary frametype', markup.oneliner.code(
             args.primary_frametype) or '-'),
         ('Primary cache file', markup.oneliner.code(
             args.primary_cache) or '-'),
-        ('Outlier threshold', '%s sigma' % args.remove_outliers),
+        ('Outlier threshold', outlierremove),
         ('Lasso coefficient threshold', str(threshold)),
         ('Cluster coefficient threshold', str(args.cluster_coefficient)),
         ('Non-zero coefficients', str(numpy.count_nonzero(model.coef_))),
@@ -928,8 +939,8 @@ def main(args=None):
     page.div(class_='card card-%s card-body shadow-sm' % args.ifo.lower())
     page.div(class_='row')
     page.div(class_='col-md-8 offset-md-2', id_='results-table')
-    page.p('Below are the top {} mean minute-trend channels, ranked by '
-           'Lasso correlation with the primary.'.format(df.shape[0]))
+    page.p('Below are the top {} mean %s-trend channels, ranked by '
+           'Lasso correlation with the primary.'.format(df.shape[0]) % args.trend_type)
     page.add(df.to_html(
         classes=('table', 'table-sm', 'table-hover'),
         formatters={
@@ -1049,7 +1060,4 @@ def main(args=None):
 # -- run from command-line ----------------------------------------------------
 
 if __name__ == "__main__":
-    # suppress warnings
-    with warnings.catch_warnings():
-        warnings.simplefilter("once")
-        main()
+    main()
