@@ -562,7 +562,7 @@ def main(args=None):
     line_size_primary = args.line_size_primary
     threshold = args.threshold
     trend_type = args.trend_type
-    
+
     # suppress warnings
     warnings.simplefilter("ignore")
 
