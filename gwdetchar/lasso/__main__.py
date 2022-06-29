@@ -20,6 +20,7 @@ import multiprocessing
 import os
 import re
 import sys
+import warnings
 
 from gwpy.timeseries import TimeSeries
 from gwpy.segments import DataQualityFlag
@@ -1048,4 +1049,7 @@ def main(args=None):
 # -- run from command-line ----------------------------------------------------
 
 if __name__ == "__main__":
-    main()
+    # suppress warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter("once")
+        main()
