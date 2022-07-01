@@ -288,13 +288,33 @@ def get_primary_ts(channel, start, end, active_segs,
                           active_segs, cache, nproc)
 
 
-def get_active_segs(start, end, dq_flag):
+def get_active_segs(start, end, dq_flag, nproc=1):
     """
-    Get active flag segments for the ifo
-    - used for getting primary & aux channel data
+    Get active flag segments for the ifo,
+    either from a file or by querying
+
+    :param start: start time in gps
+    :param end: end time in gps
+    :param dq_flag: name of DataQualityFlag to query or the file to read
+    :param nproc: multiprocessing
+    :return: list of active segments longer than 180s and the DataQualityFlag name
     """
-    LOGGER.info(f"Querying data quality flag {dq_flag}")
-    active_times = DataQualityFlag.query(dq_flag, start, end).active
+    # should try reading if . or / in flag
+    read = "." in dq_flag or "/" in dq_flag
+    # read in DataQualityFlag from file
+    if read:
+        try:
+            LOGGER.info("Reading DataQualityFlag file")
+            dq_flag = DataQualityFlag.read(dq_flag, verbose=True, nproc=nproc)
+            active_times = dq_flag.active
+            dq_flag = dq_flag.name
+        except Exception as e:
+            LOGGER.debug("Could not read DataQualityFlag file:", e +
+                         "\nAttempting to query the flag")
+            read = False
+    if not read:
+        LOGGER.info(f"Querying data quality flag {dq_flag}")
+        active_times = DataQualityFlag.query(dq_flag, start, end, nproc=nproc).active
     active_times = [span for span in active_times if span[1] - span[0] > 180]
     # list segs for logger msg
     seg_table = Table(data=([span[0] for span in active_times],
@@ -304,7 +324,7 @@ def get_active_segs(start, end, dq_flag):
                 "segments longer than 180s:\n\n")
     print(seg_table)
     print("\n\n")
-    return active_times
+    return active_times, dq_flag
 
 
 def primary_stitch(primary_channel, primary_frametype,
@@ -595,7 +615,9 @@ def main(args=None):
         args.data_quality_flag = args.data_quality_flag.format(IFO=args.ifo)
 
     # get active segments for primary and aux stitching
-    active_segs = get_active_segs(start, end, args.data_quality_flag)
+    active_segs, args.data_quality_flag = get_active_segs(start, end,
+                                                          args.data_quality_flag,
+                                                          nproc=args.nproc)
 
     # bandpass primary
     if args.band_pass:
