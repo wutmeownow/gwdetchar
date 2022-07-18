@@ -20,7 +20,6 @@ import multiprocessing
 import os
 import re
 import sys
-import warnings
 
 from gwpy.timeseries import TimeSeries
 from gwpy.segments import DataQualityFlag
@@ -270,22 +269,105 @@ def _process_channel(input_):
     return (chan, lassocoef, plot4, plot5, plot6, ts)
 
 
+trend_type = "minute"
+
+def get_active_segs(start, end, dq_flag, nproc=1):
+    """
+    Get active flag segments for the ifo,
+    either from a file or by querying
+
+    :param start: start time in gps
+    :param end: end time in gps
+    :param dq_flag: name of DataQualityFlag to query or the file to read
+    :param nproc: multiprocessing
+    :return: list of active segments longer than 180s and the DataQualityFlag name
+    """
+    # should try reading if . or / in flag
+    read = "." in dq_flag or "/" in dq_flag
+    # read in DataQualityFlag from file
+    if read:
+        try:
+            print("Reading DataQualityFlag file")
+            dq_flag = DataQualityFlag.read(dq_flag, verbose=True, nproc=nproc)
+            active_times = dq_flag.active
+            dq_flag = dq_flag.name
+        except Exception as e:
+            print("Could not read DataQualityFlag file:", e,
+                         "\nAttempting to query the flag")
+            read = False
+    if not read:
+        print(f"Querying data quality flag {dq_flag}")
+        active_times = DataQualityFlag.query(dq_flag, start, end, nproc=nproc).active
+    active_times = [span for span in active_times if span[1] - span[0] > 120]
+    # list segs for logger msg
+    seg_table = Table(data=([span[0] for span in active_times],
+                          [span[1] for span in active_times]),
+                   names=('Start', 'End'))
+    print(f"Identified {len(active_times)} active "
+                "segments longer than 120s:\n\n")
+    print(seg_table)
+    print("\n\n")
+    return active_times, dq_flag
+
 def get_primary_ts(channel, start, end, active_segs,
                    filepath=None, frametype=None,
                    cache=None, nproc=1):
     """
-    Retrieve primary channel timeseries
-    by either reading a .gwf file or querying
+    Get primary channel data from file or by fetching
+    for active flag segments, then stitch them into one TimeSeries
+
+    :param channel: detector channel for the TimeSeries
+    :param start: start time in gps
+    :param end: end time in gps
+    :param active_segs: active segments to read in data by 
+    :param filepath: path to TimeSeries file to read
+    :param frametype: frametype to fetch data from
+    :param cache: cache for fetching data
+    :param nproc: multiprocessing
+    :return: stitched TimeSeries and padded TimeSeries with each segment
     """
-    if filepath is not None:
-        LOGGER.info('Using custom TimeSeries file')
-        return TimeSeries.read(filepath, channel=channel,
-                               start=start, end=end,
-                               format='gwf',
-                               verbose='Reading primary:'.rjust(30),
-                               nproc=nproc)
-    return primary_stitch(channel, frametype,
-                          active_segs, cache, nproc)
+    # data array for stitched ts
+    primary_values = []
+    # padded ts
+    ts = None
+    cur = 0
+    # fetch from database
+    if filepath is None:
+        for segment in active_segs:
+            LOGGER.info(f'Fetching segment [{cur+1}/{len(active_segs)}] '
+                        f'({segment.start}, {segment.end})\n')
+            seg_data = get_data(channel, segment.start, segment.end,
+                                        verbose='Reading primary:'.rjust(30),
+                                        frametype=frametype,
+                                        source=cache,
+                                        nproc=nproc).crop(segment.start, segment.end)
+            if ts is None:
+                # first segment - this is the main TS to append next segments to - copy to avoid error 
+                ts = seg_data.copy()
+            else:
+                # not first segment - append to ts
+                ts.append(seg_data, gap="pad", pad=0)
+            # add values to list
+            primary_values.extend(seg_data.value)
+            cur += 1
+    # read from file - padded with 0's between segments
+    else:
+        ts = TimeSeries.read(filepath, channel=channel, start=start,
+                             end=end, verbose='Reading primary:'.rjust(30),
+                             nproc=nproc).crop(start, end)
+        for segment in active_segs:
+            LOGGER.info(f'Cropping segment [{cur+1}/{len(active_segs)}] '
+                        f'({segment.start}, {segment.end})\n')
+            seg_data = ts.crop(start=segment.start, end=segment.end, copy=True)
+            # add values to list
+            primary_values.extend(seg_data.value)
+            cur += 1
+    # calculate new time array for stitched ts
+    new_start = float(active_segs[0].start)
+    new_end = new_start+ts.dt.value*len(primary_values)
+    new_times = numpy.linspace(new_start, new_end, len(primary_values))
+    return TimeSeries(primary_values, times=new_times)
+    # return TimeSeries(primary_values, times=new_times), ts
 
 
 def get_active_segs(start, end, dq_flag, nproc=1):
@@ -325,35 +407,6 @@ def get_active_segs(start, end, dq_flag, nproc=1):
     print(seg_table)
     print("\n\n")
     return active_times, dq_flag
-
-
-def primary_stitch(primary_channel, primary_frametype,
-                   active_segs, cache, nproc):
-    """
-    Get primary channel data for active flag segments,
-    then add them into one TimeSeries
-    """
-    primary_values = []
-    cur = 1
-    for segment in active_segs:
-        LOGGER.info(f'Fetching segment [{cur}/{len(active_segs)}] '
-                    f'({segment.start}, {segment.end})')
-        seg_primary_data = get_data(primary_channel, segment.start, segment.end,
-                                    verbose='Reading primary:'.rjust(30),
-                                    frametype=primary_frametype,
-                                    source=cache,
-                                    nproc=nproc).crop(segment.start, segment.end)
-        primary_values.extend(seg_primary_data.value)
-        cur += 1
-    LOGGER.debug('----Primary channel data finished----')
-    new_start = float(active_segs[0].start)
-    if trend_type == "second":
-        dt = 1
-    else:
-        dt = 60
-    new_end = new_start+dt*len(primary_values)
-    times = numpy.linspace(new_start, new_end, len(primary_values))
-    return TimeSeries(primary_values, times=times)
 
 
 def aux_stitch(channel_list, aux_frametype, active_segs, nproc=1):
@@ -582,9 +635,6 @@ def main(args=None):
     line_size_primary = args.line_size_primary
     threshold = args.threshold
     trend_type = args.trend_type
-
-    # suppress warnings
-    warnings.simplefilter("ignore")
 
     # let's go
     LOGGER.info('{} Lasso correlations {}-{}'.format(args.ifo, start, end))
