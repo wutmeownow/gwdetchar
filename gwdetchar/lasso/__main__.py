@@ -542,7 +542,8 @@ def create_parser():
         '-d',
         '--data-quality-flag',
         default='{IFO}:DMT-ANALYSIS_READY:1',
-        help='data quality flag to retrieve active segments by',
+        help='name of data quality flag to retrieve active segments by;'
+        'give a path to use a custom data quality flag file',
     )
 
     # signal processing arguments
