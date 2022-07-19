@@ -22,33 +22,34 @@ import re
 import sys
 
 from gwpy.timeseries import TimeSeries
-
+from gwpy.time import from_gps
 from gwpy.segments import DataQualityFlag
 from gwpy.segments import Segment
+from gwpy.detector import ChannelList
+from gwpy.io import nds2 as io_nds2
 
 import numpy
 
 from MarkupPy import markup
 
 from astropy.table import Table
+from astropy.time import Time
 
 from sklearn import linear_model
 from sklearn.preprocessing import scale
 
 from pandas import set_option
 
-from gwpy.detector import ChannelList
-from gwpy.io import nds2 as io_nds2
-
-from .. import (cli, lasso as gwlasso)
-from ..io.datafind import get_data
-from ..io import html as htmlio
-
 from matplotlib import (use, rcParams)
 use('Agg')
 
+from gwdetchar import (cli, lasso as gwlasso)
+from gwdetchar.io.datafind import get_data
+from gwdetchar.io import html as htmlio
+
 # backend-dependent imports
 from matplotlib.cm import get_cmap  # noqa: E402
+import matplotlib.pyplot as plt
 from gwpy.plot import Plot  # noqa: E402
 from gwdetchar.lasso import plot as gwplot  # noqa: E402
 from gwdetchar.plot import texify  # noqa: E402
@@ -196,9 +197,15 @@ def _process_channel(input_):
         ax1 = fig.add_subplot(2, 1, 1, xscale='auto-gps', epoch=start)
         ax1.plot(primaryts, label=texify(primary), color='black',
                  linewidth=line_size_primary)
+        # -- plot vertical dotted lines to visually divide time segments
+        for j in total_len:
+            plt.axvline(x=start+int(j), color='red', linestyle='dashed')  
         ax1.set_xlabel(None)
         ax2 = fig.add_subplot(2, 1, 2, sharex=ax1, xlim=xlim)
-        ax2.plot(ts, label=texify(chan), linewidth=line_size_aux)
+        ax2.plot(times, auxdata[chan], label=texify(chan), linewidth=line_size_aux)
+        # -- plot vertical dotted lines to visually divide time segments
+        for j in total_len:
+            plt.axvline(x=start+int(j), color='red', linestyle='dashed')  
         if range_is_primary:
             ax1.set_ylabel('Sensitive range [Mpc]')
         else:
@@ -222,6 +229,9 @@ def _process_channel(input_):
                 color='black', linewidth=line_size_primary)
         ax.plot(times, _descaler(tsscaled), label=texify(chan),
                 linewidth=line_size_aux)
+        # -- plot vertical dotted lines to visually divide time segments
+        for j in total_len:
+            plt.axvline(x=start+int(j), color='red', linestyle='dashed')  
         if range_is_primary:
             ax.set_ylabel('Sensitive range [Mpc]')
         else:
@@ -296,18 +306,29 @@ def get_active_segs(start, end, ifo):
     Get active flag segments for the ifo
     - used for getting primary & aux channel data
     """
-    usable_flag = f"{ifo}:DMT-ANALYSIS_READY:1"
+    #usable_flag = f"{ifo}:DMT-ANALYSIS_READY:1"
+    usable_flag = f"{ifo}:DMT-GRD_ISC_LOCK_NOMINAL:1"
+    span_dif = 180
     active_times = DataQualityFlag.query(usable_flag, start, end).active
-    active_times = [span for span in active_times if span[1] - span[0] > 180]
+    active_times = [span for span in active_times if span[1] - span[0] > span_dif]
     # list segs for logger msg
     seg_table = Table(data=([span[0] for span in active_times],
                           [span[1] for span in active_times]),
                    names=('Start', 'End'))
     LOGGER.debug(f"Identified {len(active_times)} active "
-                "segments longer than 180s:\n\n")
+                 f"segments longer than {span_dif}s:\n\n")
     print(seg_table)
     print("\n\n")
-    return active_times
+    
+    time_sum = 0
+    seg_len = []
+    total_len = []
+    for i in active_times:
+        seg_len.append(i[1]-i[0])
+        time_sum += i[1]-i[0]
+        total_len.append(time_sum)
+        
+    return active_times, total_len, time_sum
 
 
 def primary_stitch(primary_channel, primary_frametype,
@@ -317,6 +338,8 @@ def primary_stitch(primary_channel, primary_frametype,
     then add them into one TimeSeries
     """
     primary_values = []
+    primary_times = []
+    total_primaryts = None
     cur = 1
     for segment in active_segs:
         LOGGER.info(f'Fetching segment [{cur}/{len(active_segs)}] '
@@ -327,9 +350,21 @@ def primary_stitch(primary_channel, primary_frametype,
                                     source=cache,
                                     nproc=nproc).crop(segment.start, segment.end)
         primary_values.extend(seg_primary_data.value)
+        primary_times.extend(seg_primary_data.times)
+        if total_primaryts is not None:
+            total_primaryts.append(seg_primary_data, pad=0)
+        else:
+            total_primaryts = seg_primary_data.copy()
         cur += 1
     LOGGER.debug('----Primary channel data finished----')
-    return TimeSeries(primary_values, t0=active_segs[0][0])
+    new_start = float(active_segs[0].start)
+    if trend_type == "second":
+        new_end = new_start+len(primary_values)
+    else:
+        new_end = new_start+60*len(primary_values)
+    times = numpy.linspace(new_start, new_end, len(primary_values))
+    return TimeSeries(primary_values, times=times), total_primaryts
+
 
 
 def aux_stitch(channel_list, aux_frametype, active_segs, nproc=1):
@@ -526,6 +561,7 @@ def main(args=None):
     global nonzerocoef, nonzerodata, p1, primary, primary_mean, primary_std
     global primaryts, range_is_primary, re_delim, start, target, times
     global threshold, trend_type, xlim
+    global total_len
     parser = create_parser()
     args = parser.parse_args(args=args)
 
@@ -537,6 +573,7 @@ def main(args=None):
     # get run params
     start = int(args.gpsstart)
     end = int(args.gpsend)
+    total_end = int(args.gpsend)
     pad = args.filter_padding
 
     # set pertinent global variables
@@ -572,7 +609,7 @@ def main(args=None):
     nprocplot = (args.nproc_plot or args.nproc) if USETEX else 1
 
     # get active segments for primary and aux stitching
-    active_segs = get_active_segs(start, end, args.ifo)
+    active_segs, total_len, time_sum = get_active_segs(start, end, args.ifo)
 
     # bandpass primary
     if args.band_pass:
@@ -582,11 +619,11 @@ def main(args=None):
             flower, fupper = None
 
         LOGGER.info("-- Loading primary channel data")
-        bandts = get_primary_ts(channel=primary, start=start-pad,
-                                end=end+pad, active_segs=active_segs,
-                                filepath=args.primary_file,
-                                frametype=args.primary_frametype,
-                                cache=args.primary_cache, nproc=args.nproc)
+        bandts, total_bandts = get_primary_ts(channel=primary, start=start-pad,
+                                              end=end+pad, active_segs=active_segs,
+                                              filepath=args.primary_file,
+                                              frametype=args.primary_frametype,
+                                              cache=args.primary_cache, nproc=args.nproc)
         if flower < 0 or fupper >= float((bandts.sample_rate/2.).value):
             raise ValueError(
                 "bandpass frequency is out of range for this "
@@ -628,12 +665,12 @@ def main(args=None):
     else:
         # load primary channel data
         LOGGER.info("-- Loading primary channel data")
-        primaryts = get_primary_ts(channel=primary, start=start,
-                                   end=end, active_segs=active_segs,
-                                   filepath=args.primary_file,
-                                   frametype=args.primary_frametype,
-                                   cache=args.primary_cache,
-                                   nproc=args.nproc)
+        primaryts, total_primaryts = get_primary_ts(channel=primary, start=start,
+                                                    end=end, active_segs=active_segs,
+                                                    filepath=args.primary_file,
+                                                    frametype=args.primary_frametype,
+                                                    cache=args.primary_cache,
+                                                    nproc=args.nproc)
 
     if args.remove_outliers:
         LOGGER.debug(
@@ -688,7 +725,10 @@ def main(args=None):
     nafter = len(auxdata)
     LOGGER.debug('Removed {0} channels with bad data'.format(nbefore - nafter))
     LOGGER.debug('{0} channels remaining'.format(nafter))
-    data = numpy.array([scale(ts.value) for ts in auxdata.values()]).T
+    data = numpy.array([scale(ts.value) for ts in auxdata.values()], dtype=object).T
+    print('data:', data)
+    print('data shape:', data.shape)
+    print('data shape [1]:', data.shape[1])
 
     # -- perform lasso regression -------------------
 
@@ -720,7 +760,7 @@ def main(args=None):
     print('\n\n')
 
     # convert to pandas
-    set_option('max_colwidth', -1)
+    set_option('max_colwidth', None)
     df = results.to_pandas()
     df.index += 1
 
@@ -741,32 +781,80 @@ def main(args=None):
     p1 = (.1, .15, .9, .9)  # global plot defaults for plot1, lasso model
 
     times = primaryts.times.value
+    total_times = total_primaryts.times
     xlim = primaryts.span
+    total_xlim = total_primaryts.span
     cmap = get_cmap('tab20')
     colors = [cmap(i) for i in numpy.linspace(0, 1, len(nonzerodata)+1)]
 
     plot = Plot(figsize=(12, 4))
     plot.subplots_adjust(*p1)
     ax = plot.gca(xscale='auto-gps', epoch=start, xlim=xlim)
+#    ax = plot.gca()
+#    ax.subplot(xscale='auto-gps', epoch=start, xlim=xlim)
     ax.plot(times, _descaler(target), label=texify(primary),
             color='black', linewidth=line_size_primary)
     ax.plot(times, _descaler(modelFit), label='Lasso model',
             linewidth=line_size_aux)
+    # -- plot vertical dotted lines to visually divide time segments
+    total_len.pop()
+    for j in total_len:
+        plt.axvline(x=start+int(j), color='red', linestyle='dashed')
     if range_is_primary:
         ax.set_ylabel('Sensitive range [Mpc]')
-        ax.set_title('Lasso Model of Range')
+        ax.set_title('Stitched Lasso Model of Range')
     else:
         ax.set_ylabel('Primary Channel Units')
         ax.set_title('Lasso Model of Primary Channel')
     ax.legend(loc='best')
+    labels = {}
+    ax = plot.gca().xaxis
+    labels[ax] = ax.get_label_text()
+    trans = ax.get_transform()
+    epoch = float(trans.get_epoch())
+    unit = trans.get_unit_name()
+    iso = Time(epoch, format='gps', scale='utc').iso
+    utc = iso.rstrip('0').rstrip('.')
+    ax.set_label_text('Stitched Time [{0!s}] from {1!s} UTC ({2!r})'.format(unit, utc, epoch))
     plot1 = gwplot.save_figure(
          plot, '%s-LASSO_MODEL-%s.png' % (args.ifo, gpsstub),
          bbox_inches='tight')
-
+    
+    # Real-Time lasso model 
+    zero_list = numpy.where(total_primaryts.value == 0)
+    total_modelFit = _descaler(modelFit).copy()
+    for i in zero_list[0]:
+        total_modelFit.insert(i, 0)
+    #usable_flag = f"{args.ifo}:DMT-ANALYSIS_READY:1"
+    usable_flag = f"{args.ifo}:DMT-GRD_ISC_LOCK_NOMINAL:1"
+    dataquality_times = DataQualityFlag.query(usable_flag, total_primaryts.times[0], total_primaryts.times[-1])
+    plot = Plot(figsize=(12, 4.5))
+    plot.subplots_adjust(*p1)
+    ax = plot.gca(xscale='auto-gps', epoch=start, xlim=total_xlim)
+#    ax = plot.gca()
+#    ax.subplot(xscale='auto-gps', epoch=start, xlim=total_xlim)
+    ax.plot(total_primaryts, label=texify(primary),
+            color='black', linewidth=line_size_primary)
+    ax.plot(total_primaryts.times, total_modelFit, label='Real-Time Lasso model',
+            color=colors[0], linewidth=line_size_aux)
+    if range_is_primary:
+        ax.set_ylabel('Sensitive range [Mpc]')
+        ax.set_title('Real-Time Lasso Model of Range')
+    else:
+        ax.set_ylabel('Primary Channel Units')
+        ax.set_title('Lasso Model of Primary Channel')
+    ax.legend(loc=3)
+    plot.add_segments_bar(dataquality_times, label='')
+    plot1_b = gwplot.save_figure(
+        plot, '%s-REAL-TIME_LASSO_MODEL-%s.png' % (args.ifo, gpsstub),
+    bbox_inches='tight')
+    
     # summed contributions
     plot = Plot(figsize=(12, 4))
     plot.subplots_adjust(*p1)
     ax = plot.gca(xscale='auto-gps', epoch=start, xlim=xlim)
+#    ax = plot.gca()
+#    ax.subplot(xscale='auto-gps', epoch=start, xlim=xlim)
     ax.plot(times, _descaler(target), label=texify(primary),
             color='black', linewidth=line_size_primary)
     summed = 0
@@ -778,6 +866,9 @@ def main(args=None):
             label = 'Channel 1'
         ax.plot(times, _descaler(summed), label=label, color=colors[i],
                 linewidth=line_size_aux)
+        # -- plot vertical dotted lines to visually divide time segments
+        for j in total_len:
+            plt.axvline(x=start+int(j), color='red', linestyle='dashed')  
     if range_is_primary:
         ax.set_ylabel('Sensitive range [Mpc]')
     else:
@@ -792,8 +883,13 @@ def main(args=None):
     plot = Plot(figsize=(12, 4))
     plot.subplots_adjust(*p1)
     ax = plot.gca(xscale='auto-gps', epoch=start, xlim=xlim)
+#    ax = plot.gca()
+#    ax.subplot(xscale='auto-gps', epoch=start, xlim=xlim)
     ax.plot(times, _descaler(target), label=texify(primary),
             color='black', linewidth=line_size_primary)
+    # -- plot vertical dotted lines to visually divide time segments
+    for j in total_len:
+        plt.axvline(x=start+int(j), color='red', linestyle='dashed')
     for i, name in enumerate(results['Channel']):
         this = _descaler(scale(nonzerodata[name].value) * nonzerocoef[name])
         if i:
@@ -802,6 +898,9 @@ def main(args=None):
             label = 'Channel 1'
         ax.plot(times, this, label=texify(name), color=colors[i],
                 linewidth=line_size_aux)
+        # -- plot vertical dotted lines to visually divide time segments
+        for j in total_len:
+            plt.axvline(x=start+int(j), color='red', linestyle='dashed')
     if range_is_primary:
         ax.set_ylabel('Sensitive range [Mpc]')
     else:
@@ -835,7 +934,7 @@ def main(args=None):
     numpy.savetxt(channelsfile, channels, delimiter=',', fmt='%s')
 
     # write html
-    trange = '%d-%d' % (start, end)
+    trange = '%d-%d' % (start, total_end)
     title = '%s Lasso Correlation: %s' % (args.ifo, trange)
     if args.band_pass:
         links = [trange] + [(s, '#%s' % s.lower()) for s in
@@ -877,7 +976,7 @@ def main(args=None):
     page.h2('Parameters', class_='mt-4 mb-4', id_='parameters')
     page.div(class_='row')
     page.div(class_='col-md-9 col-sm-12')
-    page.add(htmlio.parameter_table(content, start=start, end=end))
+    page.add(htmlio.parameter_table(content, start=start, end=total_end))
     page.div.close()  # col-md-9 col-sm-12
 
     # -- download button
@@ -935,6 +1034,13 @@ def main(args=None):
     page.div(class_='col-md-8 offset-md-2')
     img1 = htmlio.FancyPlot(plot1)
     page.add(htmlio.fancybox_img(img1))  # primary lasso plot
+    page.div.close()  # col-md-8 offset-md-2
+    page.div.close()  # primary-lasso
+    
+    page.div(class_='row', id_='real-timef-lasso')
+    page.div(class_='col-md-8 offset-md-2')
+    img1_b = htmlio.FancyPlot(plot1_b)
+    page.add(htmlio.fancybox_img(img1_b))  # primary lasso plot
     page.div.close()  # col-md-8 offset-md-2
     page.div.close()  # primary-lasso
 
@@ -1030,6 +1136,42 @@ def main(args=None):
         page.div.close()  # card-body
         page.div.close()  # collapse
         page.div.close()  # card
+        
+        
+        
+    #Test code for time chart
+    headers = ['# seg', 'GPS start', 'GPS end', 'UTC start', 'UTC end', 'Duration [s]']
+    caption = None
+    #data_state = 'Observing'
+    data_state = 'Locked'
+    data = []
+    counter = 0
+    for seg in active_segs:
+        dtype = float(abs(seg)).is_integer() and int or float
+        counter = counter + 1
+        data.append([
+            counter,
+            dtype(seg[0]),
+            dtype(seg[1]),
+            from_gps(seg[0]).strftime('%B %d %Y %H:%M:%S.%f')[:-3],
+            from_gps(seg[1]).strftime('%B %d %Y %H:%M:%S.%f')[:-3],
+            dtype(abs(seg)),
+        ])
+    
+    page.h2('Segment information', class_='mt-4')
+    page.p("This page was generated using data in the "
+           "<strong>%s</strong> state. This is defined by "
+           "the data-quality flag <samp>%s</samp>."
+           % (data_state, usable_flag))
+    page.add(str(htmlio.table(headers, data, id='state-information', 
+                              caption='Segments for <strong>%s</strong> state' % data_state)))
+        
+        
+        
+        
+        
+        
+      
     page.div.close()  # results
     htmlio.close_page(page, 'index.html')  # save and close
     LOGGER.info("-- Process Completed")
