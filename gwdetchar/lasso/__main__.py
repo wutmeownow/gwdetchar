@@ -37,6 +37,7 @@ from sklearn.preprocessing import scale
 
 from pandas import set_option
 
+from matplotlib import pyplot as plt
 from matplotlib import (use, rcParams)
 use('Agg')
 
@@ -193,9 +194,15 @@ def _process_channel(input_):
         ax1 = fig.add_subplot(2, 1, 1, xscale='auto-gps', epoch=start)
         ax1.plot(primaryts, label=texify(primary), color='black',
                  linewidth=line_size_primary)
+        # -- plot vertical dotted lines to visually divide time segments
+        for j in total_len:
+            plt.axvline(x=start+int(j), color='red', linestyle='dashed')
         ax1.set_xlabel(None)
         ax2 = fig.add_subplot(2, 1, 2, sharex=ax1, xlim=xlim)
-        ax2.plot(ts, label=texify(chan), linewidth=line_size_aux)
+        ax2.plot(times, auxdata[chan], label=texify(chan), linewidth=line_size_aux)
+        # -- plot vertical dotted lines to visually divide time segments
+        for j in total_len:
+            plt.axvline(x=start+int(j), color='red', linestyle='dashed')
         if range_is_primary:
             ax1.set_ylabel('Sensitive range [Mpc]')
         else:
@@ -219,6 +226,9 @@ def _process_channel(input_):
                 color='black', linewidth=line_size_primary)
         ax.plot(times, _descaler(tsscaled), label=texify(chan),
                 linewidth=line_size_aux)
+        # -- plot vertical dotted lines to visually divide time segments
+        for j in total_len:
+            plt.axvline(x=start+int(j), color='red', linestyle='dashed')
         if range_is_primary:
             ax.set_ylabel('Sensitive range [Mpc]')
         else:
