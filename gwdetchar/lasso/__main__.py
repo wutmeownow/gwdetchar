@@ -31,6 +31,7 @@ import numpy
 from MarkupPy import markup
 
 from astropy.table import Table
+from astropy.time import Time
 
 from sklearn import linear_model
 from sklearn.preprocessing import scale
@@ -195,14 +196,12 @@ def _process_channel(input_):
         ax1.plot(primaryts, label=texify(primary), color='black',
                  linewidth=line_size_primary)
         # -- plot vertical dotted lines to visually divide time segments
-        for j in total_len:
-            plt.axvline(x=start+int(j), color='red', linestyle='dashed')
+        plot_seg_lines()
         ax1.set_xlabel(None)
         ax2 = fig.add_subplot(2, 1, 2, sharex=ax1, xlim=xlim)
         ax2.plot(times, auxdata[chan], label=texify(chan), linewidth=line_size_aux)
         # -- plot vertical dotted lines to visually divide time segments
-        for j in total_len:
-            plt.axvline(x=start+int(j), color='red', linestyle='dashed')
+        plot_seg_lines()
         if range_is_primary:
             ax1.set_ylabel('Sensitive range [Mpc]')
         else:
@@ -227,8 +226,7 @@ def _process_channel(input_):
         ax.plot(times, _descaler(tsscaled), label=texify(chan),
                 linewidth=line_size_aux)
         # -- plot vertical dotted lines to visually divide time segments
-        for j in total_len:
-            plt.axvline(x=start+int(j), color='red', linestyle='dashed')
+        plot_seg_lines()
         if range_is_primary:
             ax.set_ylabel('Sensitive range [Mpc]')
         else:
@@ -277,6 +275,20 @@ def _process_channel(input_):
                        '(%s)' % str(chan)))
         sys.stdout.flush()
     return (chan, lassocoef, plot4, plot5, plot6, ts)
+
+
+def plot_seg_lines():
+    """
+    Plot vertical lines distinguishing separate
+    segments of data in stitched channel plots
+    """
+    # amount to shift line because of padding between segments
+    shift = 0
+    for i in range(len(active_segs)-1):
+        plt.axvline(x=active_segs[i][1]-shift, color='red', linestyle='dashed')
+        # increase shift by time difference between next segment's start
+        # and this segment's end
+        shift += active_segs[i+1][0] - active_segs[i][-1]
 
 
 def get_active_segs(start, end, dq_flag, nproc=1):
@@ -399,7 +411,7 @@ def aux_stitch(channel_list, aux_frametype, active_segs, nproc=1):
         for k, v in seg_aux_data.items():
             # save dt to make time array
             if dt is None:
-                dt = v.dt
+                dt = v.dt.value
             # save units
             if k not in units:
                 units[k] = v.unit
@@ -412,7 +424,7 @@ def aux_stitch(channel_list, aux_frametype, active_segs, nproc=1):
     LOGGER.debug('----Auxiliary channel data finished----')
     new_start = float(active_segs[0].start)
     for k, v in auxdata.items():
-        new_end = new_start+v.dt*len(v)
+        new_end = new_start+dt*len(v)
         times = numpy.linspace(new_start, new_end, len(v))
         auxdata[k] = TimeSeries(v, times=times, unit=units[k])
     return auxdata
@@ -588,7 +600,7 @@ def main(args=None):
     global line_size_aux, line_size_primary, max_correlated_channels
     global nonzerocoef, nonzerodata, p1, primary, primary_mean, primary_std
     global primaryts, range_is_primary, re_delim, start, target, times
-    global threshold, trend_type, xlim
+    global threshold, trend_type, xlim, active_segs
     parser = create_parser()
     args = parser.parse_args(args=args)
 
@@ -823,8 +835,7 @@ def main(args=None):
     ax.plot(times, _descaler(modelFit), label='Lasso model',
             linewidth=line_size_aux)
     # -- plot vertical dotted lines to visually divide time segments
-    for j in total_len:
-        plt.axvline(x=start+int(j), color='red', linestyle='dashed')
+    plot_seg_lines()
     if range_is_primary:
         ax.set_ylabel('Sensitive range [Mpc]')
         ax.set_title('Stitched Lasso Model of Range')
@@ -885,8 +896,7 @@ def main(args=None):
         ax.plot(times, _descaler(summed), label=label, color=colors[i],
                 linewidth=line_size_aux)
         # -- plot vertical dotted lines to visually divide time segments
-        for j in total_len:
-            plt.axvline(x=start+int(j), color='red', linestyle='dashed')
+        plot_seg_lines()
     if range_is_primary:
         ax.set_ylabel('Sensitive range [Mpc]')
     else:
@@ -904,8 +914,7 @@ def main(args=None):
     ax.plot(times, _descaler(target), label=texify(primary),
             color='black', linewidth=line_size_primary)
     # -- plot vertical dotted lines to visually divide time segments
-    for j in total_len:
-        plt.axvline(x=start+int(j), color='red', linestyle='dashed')
+    plot_seg_lines()
     for i, name in enumerate(results['Channel']):
         this = _descaler(scale(nonzerodata[name].value) * nonzerocoef[name])
         if i:
@@ -915,8 +924,7 @@ def main(args=None):
         ax.plot(times, this, label=texify(name), color=colors[i],
                 linewidth=line_size_aux)
         # -- plot vertical dotted lines to visually divide time segments
-        for j in total_len:
-            plt.axvline(x=start+int(j), color='red', linestyle='dashed')
+        plot_seg_lines()
     if range_is_primary:
         ax.set_ylabel('Sensitive range [Mpc]')
     else:
