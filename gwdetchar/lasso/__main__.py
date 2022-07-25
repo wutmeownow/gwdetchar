@@ -340,7 +340,7 @@ def get_primary_ts(channel, start, end, active_segs,
     :param channel: detector channel for the TimeSeries
     :param start: start time in gps
     :param end: end time in gps
-    :param active_segs: active segments to read in data by 
+    :param active_segs: active segments to read in data by
     :param filepath: path to TimeSeries file to read
     :param frametype: frametype to fetch data from
     :param cache: cache for fetching data
@@ -363,7 +363,7 @@ def get_primary_ts(channel, start, end, active_segs,
                                         source=cache,
                                         nproc=nproc).crop(segment.start, segment.end)
             if ts is None:
-                # first segment - this is the main TS to append next segments to - copy to avoid error 
+                # first segment - copy to avoid error
                 ts = seg_data.copy()
             else:
                 # not first segment - append to ts
@@ -406,7 +406,8 @@ def aux_stitch(channel_list, aux_frametype, active_segs, nproc=1):
                     f'({segment.start}, {segment.end})')
         seg_aux_data = get_data(channel_list, segment.start,
                                 segment.end, verbose='Reading:'.rjust(30),
-                                frametype=aux_frametype, nproc=nproc).crop(segment.start, segment.end)
+                                frametype=aux_frametype, nproc=nproc).crop(segment.start,
+                                                                           segment.end)
         # k=channel name, v=timeseries
         for k, v in seg_aux_data.items():
             # save dt to make time array
@@ -856,7 +857,7 @@ def main(args=None):
          plot, '%s-LASSO_MODEL-%s.png' % (args.ifo, gpsstub),
          bbox_inches='tight')
 
-    # Real-Time lasso model 
+    # Real-Time lasso model
     zero_list = numpy.where(total_primaryts.value == 0)
     total_modelFit = _descaler(modelFit).copy()
     for i in zero_list[0]:
