@@ -279,8 +279,6 @@ def _process_channel(input_):
     return (chan, lassocoef, plot4, plot5, plot6, ts)
 
 
-trend_type = "minute"
-
 def get_active_segs(start, end, dq_flag, nproc=1):
     """
     Get active flag segments for the ifo,
@@ -290,34 +288,35 @@ def get_active_segs(start, end, dq_flag, nproc=1):
     :param end: end time in gps
     :param dq_flag: name of DataQualityFlag to query or the file to read
     :param nproc: multiprocessing
-    :return: list of active segments longer than 180s and the DataQualityFlag name
+    :return: list of active segments longer than 180s and the DataQualityFlag
     """
     # should try reading if . or / in flag
     read = "." in dq_flag or "/" in dq_flag
     # read in DataQualityFlag from file
     if read:
         try:
-            print("Reading DataQualityFlag file")
+            LOGGER.info("Reading DataQualityFlag file")
             dq_flag = DataQualityFlag.read(dq_flag, verbose=True, nproc=nproc)
-            active_times = dq_flag.active
-            dq_flag = dq_flag.name
         except Exception as e:
-            print("Could not read DataQualityFlag file:", e,
-                         "\nAttempting to query the flag")
+            LOGGER.debug("Could not read DataQualityFlag file:", e,
+                  "\nAttempting to query the flag")
             read = False
     if not read:
-        print(f"Querying data quality flag {dq_flag}")
-        active_times = DataQualityFlag.query(dq_flag, start, end, nproc=nproc).active
-    active_times = [span for span in active_times if span[1] - span[0] > 120]
+        LOGGER.info(f"Querying data quality flag {dq_flag}")
+        dq_flag = DataQualityFlag.query(dq_flag, start, end, nproc=nproc)
+    active_times = dq_flag.active
+    span_dif = 180
+    active_times = [span for span in active_times if span[1] - span[0] > span_dif]
     # list segs for logger msg
     seg_table = Table(data=([span[0] for span in active_times],
                           [span[1] for span in active_times]),
                    names=('Start', 'End'))
-    print(f"Identified {len(active_times)} active "
-                "segments longer than 120s:\n\n")
+    LOGGER.debug(f"Identified {len(active_times)} active "
+          f"segments longer than {span_dif}s:\n\n")
     print(seg_table)
     print("\n\n")
     return active_times, dq_flag
+
 
 def get_primary_ts(channel, start, end, active_segs,
                    filepath=None, frametype=None,
@@ -376,47 +375,7 @@ def get_primary_ts(channel, start, end, active_segs,
     new_start = float(active_segs[0].start)
     new_end = new_start+ts.dt.value*len(primary_values)
     new_times = numpy.linspace(new_start, new_end, len(primary_values))
-    return TimeSeries(primary_values, times=new_times)
-    # return TimeSeries(primary_values, times=new_times), ts
-
-
-def get_active_segs(start, end, dq_flag, nproc=1):
-    """
-    Get active flag segments for the ifo,
-    either from a file or by querying
-
-    :param start: start time in gps
-    :param end: end time in gps
-    :param dq_flag: name of DataQualityFlag to query or the file to read
-    :param nproc: multiprocessing
-    :return: list of active segments longer than 180s and the DataQualityFlag name
-    """
-    # should try reading if . or / in flag
-    read = "." in dq_flag or "/" in dq_flag
-    # read in DataQualityFlag from file
-    if read:
-        try:
-            LOGGER.info("Reading DataQualityFlag file")
-            dq_flag = DataQualityFlag.read(dq_flag, verbose=True, nproc=nproc)
-            active_times = dq_flag.active
-            dq_flag = dq_flag.name
-        except Exception as e:
-            LOGGER.debug("Could not read DataQualityFlag file:", e +
-                         "\nAttempting to query the flag")
-            read = False
-    if not read:
-        LOGGER.info(f"Querying data quality flag {dq_flag}")
-        active_times = DataQualityFlag.query(dq_flag, start, end, nproc=nproc).active
-    active_times = [span for span in active_times if span[1] - span[0] > 180]
-    # list segs for logger msg
-    seg_table = Table(data=([span[0] for span in active_times],
-                          [span[1] for span in active_times]),
-                   names=('Start', 'End'))
-    LOGGER.debug(f"Identified {len(active_times)} active "
-                "segments longer than 180s:\n\n")
-    print(seg_table)
-    print("\n\n")
-    return active_times, dq_flag
+    return TimeSeries(primary_values, times=new_times, unit=ts.unit), ts
 
 
 def aux_stitch(channel_list, aux_frametype, active_segs, nproc=1):
@@ -427,16 +386,23 @@ def aux_stitch(channel_list, aux_frametype, active_segs, nproc=1):
     all data over the segments
     """
     auxdata = {}
+    units = {}
+    dt = None
     cur = 1
     for segment in active_segs:
         LOGGER.info(f'Fetching segment [{cur}/{len(active_segs)}] '
                     f'({segment.start}, {segment.end})')
         seg_aux_data = get_data(channel_list, segment.start,
                                 segment.end, verbose='Reading:'.rjust(30),
-                                frametype=aux_frametype, nproc=nproc).crop(segment.start,
-                                                                           segment.end)
+                                frametype=aux_frametype, nproc=nproc).crop(segment.start, segment.end)
         # k=channel name, v=timeseries
         for k, v in seg_aux_data.items():
+            # save dt to make time array
+            if dt is None:
+                dt = v.dt
+            # save units
+            if k not in units:
+                units[k] = v.unit
             if k in auxdata:
                 auxdata[k].extend(v.value)
             else:
@@ -445,14 +411,10 @@ def aux_stitch(channel_list, aux_frametype, active_segs, nproc=1):
         cur += 1
     LOGGER.debug('----Auxiliary channel data finished----')
     new_start = float(active_segs[0].start)
-    if trend_type == "second":
-        dt = 1
-    else:
-        dt = 60
     for k, v in auxdata.items():
-        new_end = new_start+dt*len(v)
+        new_end = new_start+v.dt*len(v)
         times = numpy.linspace(new_start, new_end, len(v))
-        auxdata[k] = TimeSeries(v, times=times)
+        auxdata[k] = TimeSeries(v, times=times, unit=units[k])
     return auxdata
 
 
@@ -688,11 +650,11 @@ def main(args=None):
             flower, fupper = None
 
         LOGGER.info("-- Loading primary channel data")
-        bandts = get_primary_ts(channel=primary, start=start-pad,
-                                end=end+pad, active_segs=active_segs,
-                                filepath=args.primary_file,
-                                frametype=args.primary_frametype,
-                                cache=args.primary_cache, nproc=args.nproc)
+        bandts, total_bandts = get_primary_ts(channel=primary, start=start-pad,
+                                              end=end+pad, active_segs=active_segs,
+                                              filepath=args.primary_file,
+                                              frametype=args.primary_frametype,
+                                              cache=args.primary_cache, nproc=args.nproc)
         if flower < 0 or fupper >= float((bandts.sample_rate/2.).value):
             raise ValueError(
                 "bandpass frequency is out of range for this "
@@ -734,12 +696,12 @@ def main(args=None):
     else:
         # load primary channel data
         LOGGER.info("-- Loading primary channel data")
-        primaryts = get_primary_ts(channel=primary, start=start,
-                                   end=end, active_segs=active_segs,
-                                   filepath=args.primary_file,
-                                   frametype=args.primary_frametype,
-                                   cache=args.primary_cache,
-                                   nproc=args.nproc)
+        primaryts, total_primaryts = get_primary_ts(channel=primary, start=start,
+                                                    end=end, active_segs=active_segs,
+                                                    filepath=args.primary_file,
+                                                    frametype=args.primary_frametype,
+                                                    cache=args.primary_cache,
+                                                    nproc=args.nproc)
 
     if args.remove_outliers:
         LOGGER.debug(
@@ -847,7 +809,9 @@ def main(args=None):
     p1 = (.1, .15, .9, .9)  # global plot defaults for plot1, lasso model
 
     times = primaryts.times.value
+    total_times = total_primaryts.times
     xlim = primaryts.span
+    total_xlim = total_primaryts.span
     cmap = get_cmap('tab20')
     colors = [cmap(i) for i in numpy.linspace(0, 1, len(nonzerodata)+1)]
 
@@ -858,16 +822,52 @@ def main(args=None):
             color='black', linewidth=line_size_primary)
     ax.plot(times, _descaler(modelFit), label='Lasso model',
             linewidth=line_size_aux)
+    # -- plot vertical dotted lines to visually divide time segments
+    for j in total_len:
+        plt.axvline(x=start+int(j), color='red', linestyle='dashed')
     if range_is_primary:
         ax.set_ylabel('Sensitive range [Mpc]')
-        ax.set_title('Lasso Model of Range')
+        ax.set_title('Stitched Lasso Model of Range')
     else:
         ax.set_ylabel('Primary Channel Units')
-        ax.set_title('Lasso Model of Primary Channel')
+        ax.set_title('Stitched Lasso Model of Primary Channel')
     ax.legend(loc='best')
+    labels = {}
+    ax = plot.gca().xaxis
+    labels[ax] = ax.get_label_text()
+    trans = ax.get_transform()
+    epoch = float(trans.get_epoch())
+    unit = trans.get_unit_name()
+    iso = Time(epoch, format='gps', scale='utc').iso
+    utc = iso.rstrip('0').rstrip('.')
+    ax.set_label_text('Stitched Time [{0!s}] from {1!s} UTC ({2!r})'.format(unit, utc, epoch))
     plot1 = gwplot.save_figure(
          plot, '%s-LASSO_MODEL-%s.png' % (args.ifo, gpsstub),
          bbox_inches='tight')
+
+    # Real-Time lasso model 
+    zero_list = numpy.where(total_primaryts.value == 0)
+    total_modelFit = _descaler(modelFit).copy()
+    for i in zero_list[0]:
+        total_modelFit.insert(i, 0)
+    plot = Plot(figsize=(12, 4.5))
+    plot.subplots_adjust(*p1)
+    ax = plot.gca(xscale='auto-gps', epoch=start, xlim=total_xlim)
+    ax.plot(total_primaryts, label=texify(primary),
+            color='black', linewidth=line_size_primary)
+    ax.plot(total_primaryts.times, total_modelFit, label='Real-Time Lasso model',
+            color=colors[0], linewidth=line_size_aux)
+    if range_is_primary:
+        ax.set_ylabel('Sensitive range [Mpc]')
+        ax.set_title('Real-Time Lasso Model of Range')
+    else:
+        ax.set_ylabel('Primary Channel Units')
+        ax.set_title('Real-Time Lasso Model of Primary Channel')
+    ax.legend(loc=3)
+    plot.add_segments_bar(args.data_quality_flag, label='')
+    plot1_b = gwplot.save_figure(
+        plot, '%s-REAL-TIME_LASSO_MODEL-%s.png' % (args.ifo, gpsstub),
+    bbox_inches='tight')
 
     # summed contributions
     plot = Plot(figsize=(12, 4))
@@ -884,6 +884,9 @@ def main(args=None):
             label = 'Channel 1'
         ax.plot(times, _descaler(summed), label=label, color=colors[i],
                 linewidth=line_size_aux)
+        # -- plot vertical dotted lines to visually divide time segments
+        for j in total_len:
+            plt.axvline(x=start+int(j), color='red', linestyle='dashed')
     if range_is_primary:
         ax.set_ylabel('Sensitive range [Mpc]')
     else:
@@ -900,6 +903,9 @@ def main(args=None):
     ax = plot.gca(xscale='auto-gps', epoch=start, xlim=xlim)
     ax.plot(times, _descaler(target), label=texify(primary),
             color='black', linewidth=line_size_primary)
+    # -- plot vertical dotted lines to visually divide time segments
+    for j in total_len:
+        plt.axvline(x=start+int(j), color='red', linestyle='dashed')
     for i, name in enumerate(results['Channel']):
         this = _descaler(scale(nonzerodata[name].value) * nonzerocoef[name])
         if i:
@@ -908,6 +914,9 @@ def main(args=None):
             label = 'Channel 1'
         ax.plot(times, this, label=texify(name), color=colors[i],
                 linewidth=line_size_aux)
+        # -- plot vertical dotted lines to visually divide time segments
+        for j in total_len:
+            plt.axvline(x=start+int(j), color='red', linestyle='dashed')
     if range_is_primary:
         ax.set_ylabel('Sensitive range [Mpc]')
     else:
@@ -941,7 +950,7 @@ def main(args=None):
     numpy.savetxt(channelsfile, channels, delimiter=',', fmt='%s')
 
     # write html
-    trange = '%d-%d' % (start, end)
+    trange = '%d-%d' % (start, int(args.gpsend))
     title = '%s Lasso Correlation: %s' % (args.ifo, trange)
     if args.band_pass:
         links = [trange] + [(s, '#%s' % s.lower()) for s in
@@ -982,7 +991,7 @@ def main(args=None):
     page.h2('Parameters', class_='mt-4 mb-4', id_='parameters')
     page.div(class_='row')
     page.div(class_='col-md-9 col-sm-12')
-    page.add(htmlio.parameter_table(content, start=start, end=end))
+    page.add(htmlio.parameter_table(content, start=start, end=int(args.gpsend)))
     page.div.close()  # col-md-9 col-sm-12
 
     # -- download button
@@ -1040,6 +1049,13 @@ def main(args=None):
     page.div(class_='col-md-8 offset-md-2')
     img1 = htmlio.FancyPlot(plot1)
     page.add(htmlio.fancybox_img(img1))  # primary lasso plot
+    page.div.close()  # col-md-8 offset-md-2
+    page.div.close()  # primary-lasso
+
+    page.div(class_='row', id_='real-timef-lasso')
+    page.div(class_='col-md-8 offset-md-2')
+    img1_b = htmlio.FancyPlot(plot1_b)
+    page.add(htmlio.fancybox_img(img1_b))  # primary lasso plot
     page.div.close()  # col-md-8 offset-md-2
     page.div.close()  # primary-lasso
 
