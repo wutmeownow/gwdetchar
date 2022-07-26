@@ -197,12 +197,12 @@ def _process_channel(input_):
         ax1.plot(primaryts, label=texify(primary), color='black',
                  linewidth=line_size_primary)
         # -- plot vertical dotted lines to visually divide time segments
-        plot_seg_lines()
+        gwplot.plot_seg_lines(active_segs)
         ax1.set_xlabel(None)
         ax2 = fig.add_subplot(2, 1, 2, sharex=ax1, xlim=xlim)
         ax2.plot(times, auxdata[chan], label=texify(chan), linewidth=line_size_aux)
         # -- plot vertical dotted lines to visually divide time segments
-        plot_seg_lines()
+        gwplot.plot_seg_lines(active_segs)
         if range_is_primary:
             ax1.set_ylabel('Sensitive range [Mpc]')
         else:
@@ -227,7 +227,7 @@ def _process_channel(input_):
         ax.plot(times, _descaler(tsscaled), label=texify(chan),
                 linewidth=line_size_aux)
         # -- plot vertical dotted lines to visually divide time segments
-        plot_seg_lines()
+        gwplot.plot_seg_lines(active_segs)
         if range_is_primary:
             ax.set_ylabel('Sensitive range [Mpc]')
         else:
@@ -278,20 +278,6 @@ def _process_channel(input_):
     return (chan, lassocoef, plot4, plot5, plot6, ts)
 
 
-def plot_seg_lines():
-    """
-    Plot vertical lines distinguishing separate
-    segments of data in stitched channel plots
-    """
-    # amount to shift line because of padding between segments
-    shift = 0
-    for i in range(len(active_segs)-1):
-        plt.axvline(x=active_segs[i][1]-shift, color='red', linestyle='dashed')
-        # increase shift by time difference between next segment's start
-        # and this segment's end
-        shift += active_segs[i+1][0] - active_segs[i][-1]
-
-
 def get_active_segs(start, end, dq_flag, nproc=1):
     """
     Get active flag segments for the ifo,
@@ -328,7 +314,7 @@ def get_active_segs(start, end, dq_flag, nproc=1):
           f"segments longer than {span_dif}s:\n\n")
     print(seg_table)
     print("\n\n")
-    return active_times, dq_flag.name
+    return active_times, dq_flag
 
 
 def get_primary_ts(channel, active_segs, filepath=None,
@@ -369,12 +355,14 @@ def get_primary_ts(channel, active_segs, filepath=None,
             # add values to list
             primary_values.extend(seg_data.value)
             cur += 1
-    # read from file - padded with 0's between segments
+    # read from file
     else:
+        # read entire padded timeseries file from start to end
         ts = TimeSeries.read(filepath, channel=channel, start=active_segs[0].start,
                              end=active_segs[-1].end, verbose='Reading primary:'.rjust(30),
                              nproc=nproc).crop(active_segs[0].start, active_segs[-1].end)
         for segment in active_segs:
+            # crop out each active segment
             LOGGER.info(f'Cropping segment [{cur+1}/{len(active_segs)}] '
                         f'({segment.start}, {segment.end})\n')
             seg_data = ts.crop(start=segment.start, end=segment.end, copy=True)
@@ -394,16 +382,12 @@ def get_aux_data(channel_list, aux_frametype, active_segs, nproc=1):
     and stitch into single TimeSeries -
     for each channel, have a single TimeSeries of
     all data over the segments
-    
+
     :param channel_list: list of auxiliary channels
-    :param aux_frametype: 
-    :param end: end time in gps
+    :param aux_frametype: frametype to fetch aux data
     :param active_segs: active segments to read in data by
-    :param filepath: path to TimeSeries file to read
-    :param frametype: frametype to fetch data from
-    :param cache: cache for fetching data
     :param nproc: multiprocessing
-    :return: stitched TimeSeries and padded TimeSeries with each segment
+    :return: dict of stitched aux channel timeseries
     """
     auxdata = {}
     units = {}
@@ -844,7 +828,7 @@ def main(args=None):
     ax.plot(times, _descaler(modelFit), label='Lasso model',
             linewidth=line_size_aux)
     # -- plot vertical dotted lines to visually divide time segments
-    plot_seg_lines()
+    gwplot.plot_seg_lines(active_segs)
     if range_is_primary:
         ax.set_ylabel('Sensitive range [Mpc]')
         ax.set_title('Stitched Lasso Model of Range')
@@ -905,7 +889,7 @@ def main(args=None):
         ax.plot(times, _descaler(summed), label=label, color=colors[i],
                 linewidth=line_size_aux)
         # -- plot vertical dotted lines to visually divide time segments
-        plot_seg_lines()
+        gwplot.plot_seg_lines(active_segs)
     if range_is_primary:
         ax.set_ylabel('Sensitive range [Mpc]')
     else:
@@ -923,7 +907,7 @@ def main(args=None):
     ax.plot(times, _descaler(target), label=texify(primary),
             color='black', linewidth=line_size_primary)
     # -- plot vertical dotted lines to visually divide time segments
-    plot_seg_lines()
+    gwplot.plot_seg_lines(active_segs)
     for i, name in enumerate(results['Channel']):
         this = _descaler(scale(nonzerodata[name].value) * nonzerocoef[name])
         if i:
@@ -933,7 +917,7 @@ def main(args=None):
         ax.plot(times, this, label=texify(name), color=colors[i],
                 linewidth=line_size_aux)
         # -- plot vertical dotted lines to visually divide time segments
-        plot_seg_lines()
+        gwplot.plot_seg_lines(active_segs)
     if range_is_primary:
         ax.set_ylabel('Sensitive range [Mpc]')
     else:
@@ -1189,8 +1173,8 @@ def main(args=None):
     page.p("This page was generated using data in the "
            "<strong>%s</strong> state. This is defined by "
            "the data-quality flag <samp>%s</samp>."
-           % (data_state, args.data_quality_flag))
-    page.add(str(htmlio.table(headers, data, id='state-information', 
+           % (data_state, args.data_quality_flag.name))
+    page.add(str(htmlio.table(headers, data, id='state-information',
                               caption='Segments for <strong>%s</strong> state' % data_state)))
     page.div.close()  # results
     htmlio.close_page(page, 'index.html')  # save and close
