@@ -22,6 +22,7 @@ import re
 import sys
 
 from gwpy.timeseries import TimeSeries
+from gwpy.time import from_gps
 from gwpy.segments import DataQualityFlag
 from gwpy.detector import ChannelList
 from gwpy.io import nds2 as io_nds2
@@ -300,7 +301,7 @@ def get_active_segs(start, end, dq_flag, nproc=1):
     :param end: end time in gps
     :param dq_flag: name of DataQualityFlag to query or the file to read
     :param nproc: multiprocessing
-    :return: list of active segments longer than 180s and the DataQualityFlag
+    :return: list of active segments longer than 180s and the name of the DataQualityFlag
     """
     # should try reading if . or / in flag
     read = "." in dq_flag or "/" in dq_flag
@@ -327,19 +328,16 @@ def get_active_segs(start, end, dq_flag, nproc=1):
           f"segments longer than {span_dif}s:\n\n")
     print(seg_table)
     print("\n\n")
-    return active_times, dq_flag
+    return active_times, dq_flag.name
 
 
-def get_primary_ts(channel, start, end, active_segs,
-                   filepath=None, frametype=None,
-                   cache=None, nproc=1):
+def get_primary_ts(channel, active_segs, filepath=None,
+                   frametype=None, cache=None, nproc=1):
     """
     Get primary channel data from file or by fetching
     for active flag segments, then stitch them into one TimeSeries
 
     :param channel: detector channel for the TimeSeries
-    :param start: start time in gps
-    :param end: end time in gps
     :param active_segs: active segments to read in data by
     :param filepath: path to TimeSeries file to read
     :param frametype: frametype to fetch data from
@@ -373,9 +371,9 @@ def get_primary_ts(channel, start, end, active_segs,
             cur += 1
     # read from file - padded with 0's between segments
     else:
-        ts = TimeSeries.read(filepath, channel=channel, start=start,
-                             end=end, verbose='Reading primary:'.rjust(30),
-                             nproc=nproc).crop(start, end)
+        ts = TimeSeries.read(filepath, channel=channel, start=active_segs[0].start,
+                             end=active_segs[-1].end, verbose='Reading primary:'.rjust(30),
+                             nproc=nproc).crop(active_segs[0].start, active_segs[-1].end)
         for segment in active_segs:
             LOGGER.info(f'Cropping segment [{cur+1}/{len(active_segs)}] '
                         f'({segment.start}, {segment.end})\n')
@@ -390,12 +388,22 @@ def get_primary_ts(channel, start, end, active_segs,
     return TimeSeries(primary_values, times=new_times, unit=ts.unit), ts
 
 
-def aux_stitch(channel_list, aux_frametype, active_segs, nproc=1):
+def get_aux_data(channel_list, aux_frametype, active_segs, nproc=1):
     """
     Get aux channel data for active flag segments
     and stitch into single TimeSeries -
     for each channel, have a single TimeSeries of
     all data over the segments
+    
+    :param channel_list: list of auxiliary channels
+    :param aux_frametype: 
+    :param end: end time in gps
+    :param active_segs: active segments to read in data by
+    :param filepath: path to TimeSeries file to read
+    :param frametype: frametype to fetch data from
+    :param cache: cache for fetching data
+    :param nproc: multiprocessing
+    :return: stitched TimeSeries and padded TimeSeries with each segment
     """
     auxdata = {}
     units = {}
@@ -650,7 +658,7 @@ def main(args=None):
     if args.data_quality_flag == '{IFO}:DMT-ANALYSIS_READY:1':
         args.data_quality_flag = args.data_quality_flag.format(IFO=args.ifo)
 
-    # get active segments for primary and aux stitching
+    # get active segments for primary and aux stitching - keep dqflag name
     active_segs, args.data_quality_flag = get_active_segs(start, end,
                                                           args.data_quality_flag,
                                                           nproc=args.nproc)
@@ -663,8 +671,8 @@ def main(args=None):
             flower, fupper = None
 
         LOGGER.info("-- Loading primary channel data")
-        bandts, total_bandts = get_primary_ts(channel=primary, start=start-pad,
-                                              end=end+pad, active_segs=active_segs,
+        bandts, total_bandts = get_primary_ts(channel=primary,
+                                              active_segs=active_segs,
                                               filepath=args.primary_file,
                                               frametype=args.primary_frametype,
                                               cache=args.primary_cache, nproc=args.nproc)
@@ -709,8 +717,8 @@ def main(args=None):
     else:
         # load primary channel data
         LOGGER.info("-- Loading primary channel data")
-        primaryts, total_primaryts = get_primary_ts(channel=primary, start=start,
-                                                    end=end, active_segs=active_segs,
+        primaryts, total_primaryts = get_primary_ts(channel=primary,
+                                                    active_segs=active_segs,
                                                     filepath=args.primary_file,
                                                     frametype=args.primary_frametype,
                                                     cache=args.primary_cache,
@@ -749,7 +757,7 @@ def main(args=None):
         frametype = '%s_T' % args.ifo  # for second trends
 
     # read aux channels
-    auxdata = aux_stitch(channels, frametype, active_segs, nproc=args.nproc)
+    auxdata = get_aux_data(channels, frametype, active_segs, nproc=args.nproc)
 
     # -- removes flat data to be re-introdused later
 
@@ -1160,6 +1168,30 @@ def main(args=None):
         page.div.close()  # card-body
         page.div.close()  # collapse
         page.div.close()  # card
+    #Test code for time chart
+    headers = ['# seg', 'GPS start', 'GPS end', 'UTC start', 'UTC end', 'Duration [s]']
+    caption = None
+    data = []
+    counter = 0
+    for seg in active_segs:
+        dtype = float(abs(seg)).is_integer() and int or float
+        counter = counter + 1
+        data.append([
+            counter,
+            dtype(seg[0]),
+            dtype(seg[1]),
+            from_gps(seg[0]).strftime('%B %d %Y %H:%M:%S.%f')[:-3],
+            from_gps(seg[1]).strftime('%B %d %Y %H:%M:%S.%f')[:-3],
+            dtype(abs(seg)),
+        ])
+    data_state = "Locked"
+    page.h2('Segment information', class_='mt-4')
+    page.p("This page was generated using data in the "
+           "<strong>%s</strong> state. This is defined by "
+           "the data-quality flag <samp>%s</samp>."
+           % (data_state, args.data_quality_flag))
+    page.add(str(htmlio.table(headers, data, id='state-information', 
+                              caption='Segments for <strong>%s</strong> state' % data_state)))
     page.div.close()  # results
     htmlio.close_page(page, 'index.html')  # save and close
     LOGGER.info("-- Process Completed")
