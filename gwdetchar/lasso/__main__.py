@@ -371,7 +371,7 @@ def get_primary_ts(channel, active_segs, filepath=None,
             cur += 1
     # calculate new time array for stitched ts
     new_start = float(active_segs[0].start)
-    new_end = new_start+ts.dt.value*len(primary_values)
+    new_end = new_start+ts.dt.value*(len(primary_values)-1)
     new_times = numpy.linspace(new_start, new_end, len(primary_values))
     return TimeSeries(primary_values, times=new_times, unit=ts.unit), ts
 
@@ -417,7 +417,7 @@ def get_aux_data(channel_list, aux_frametype, active_segs, nproc=1):
     LOGGER.debug('----Auxiliary channel data finished----')
     new_start = float(active_segs[0].start)
     for k, v in auxdata.items():
-        new_end = new_start+dt*len(v)
+        new_end = new_start+dt*(len(v)-1)
         times = numpy.linspace(new_start, new_end, len(v))
         auxdata[k] = TimeSeries(v, times=times, unit=units[k])
     return auxdata
@@ -1157,7 +1157,7 @@ def main(args=None):
     caption = None
     data = []
     counter = 0
-    for seg in active_segs:
+    for seg in args.data_quality_flag.active:
         dtype = float(abs(seg)).is_integer() and int or float
         counter = counter + 1
         data.append([
