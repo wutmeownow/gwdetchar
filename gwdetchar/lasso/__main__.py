@@ -23,7 +23,7 @@ import sys
 
 from gwpy.timeseries import TimeSeries
 from gwpy.time import from_gps
-from gwpy.segments import DataQualityFlag
+from gwpy.segments import Segment, DataQualityFlag
 from gwpy.detector import ChannelList
 from gwpy.io import nds2 as io_nds2
 
@@ -278,7 +278,7 @@ def _process_channel(input_):
     return (chan, lassocoef, plot4, plot5, plot6, ts)
 
 
-def get_active_segs(start, end, dq_flag, nproc=1):
+def get_active_segs(start, end, dq_flag, samples, nproc=1):
     """
     Get active flag segments for the ifo,
     either from a file or by querying
@@ -286,8 +286,9 @@ def get_active_segs(start, end, dq_flag, nproc=1):
     :param start: start time in gps
     :param end: end time in gps
     :param dq_flag: name of DataQualityFlag to query or the file to read
+    :param samples: minimum number of samples a segment should have
     :param nproc: multiprocessing
-    :return: list of active segments longer than 180s and the name of the DataQualityFlag
+    :return: list of active segments longer than samples and the DataQualityFlag
     """
     # should try reading if . or / in flag
     read = "." in dq_flag or "/" in dq_flag
@@ -304,14 +305,15 @@ def get_active_segs(start, end, dq_flag, nproc=1):
         LOGGER.info(f"Querying data quality flag {dq_flag}")
         dq_flag = DataQualityFlag.query(dq_flag, start, end, nproc=nproc)
     active_times = dq_flag.active
-    span_dif = 180
-    active_times = [span for span in active_times if span[1] - span[0] > span_dif]
+    if trend_type == 'minute':
+        samples = 60*samples
+    active_times = [span for span in active_times if span[1] - span[0] > samples]
     # list segs for logger msg
     seg_table = Table(data=([span[0] for span in active_times],
                           [span[1] for span in active_times]),
                    names=('Start', 'End'))
     LOGGER.debug(f"Identified {len(active_times)} active "
-          f"segments longer than {span_dif}s:\n\n")
+          f"segments longer than {samples}s:\n\n")
     print(seg_table)
     print("\n\n")
     return active_times, dq_flag
@@ -329,8 +331,11 @@ def get_primary_ts(channel, active_segs, filepath=None,
     :param frametype: frametype to fetch data from
     :param cache: cache for fetching data
     :param nproc: multiprocessing
-    :return: stitched TimeSeries and padded TimeSeries with each segment
+    :return: stitched TimeSeries and padded TimeSeries with each segment, 
+    list of exact timeseries segments timespans and their length
     """
+    # list of ts segs and length pairs
+    ts_segs = []
     # data array for stitched ts
     primary_values = []
     # padded ts
@@ -346,6 +351,7 @@ def get_primary_ts(channel, active_segs, filepath=None,
                                         frametype=frametype,
                                         source=cache,
                                         nproc=nproc).crop(segment.start, segment.end)
+            ts_segs.append([Segment(seg_data.t0.value, seg_data.times[-1].value), len(seg_data)])
             if ts is None:
                 # first segment - copy to avoid error
                 ts = seg_data.copy()
@@ -366,6 +372,7 @@ def get_primary_ts(channel, active_segs, filepath=None,
             LOGGER.info(f'Cropping segment [{cur+1}/{len(active_segs)}] '
                         f'({segment.start}, {segment.end})\n')
             seg_data = ts.crop(start=segment.start, end=segment.end, copy=True)
+            ts_segs.append([Segment(seg_data.t0.value, seg_data.times[-1].value), len(seg_data)])
             # add values to list
             primary_values.extend(seg_data.value)
             cur += 1
@@ -373,7 +380,7 @@ def get_primary_ts(channel, active_segs, filepath=None,
     new_start = float(active_segs[0].start)
     new_end = new_start+ts.dt.value*(len(primary_values)-1)
     new_times = numpy.linspace(new_start, new_end, len(primary_values))
-    return TimeSeries(primary_values, times=new_times, unit=ts.unit), ts
+    return TimeSeries(primary_values, times=new_times, unit=ts.unit), ts, ts_segs
 
 
 def get_aux_data(channel_list, aux_frametype, active_segs, nproc=1):
@@ -507,6 +514,13 @@ def create_parser():
         type=float,
         default=None,
         help='Fractional limit for removing outliers between 0 and 1',
+    )
+    parser.add_argument(
+        '-s',
+        '--segment-sample-size',
+        type=int,
+        default=40,
+        help='minimum number of samples an active segment should have',
     )
     parser.add_argument(
         '-t',
@@ -645,6 +659,7 @@ def main(args=None):
     # get active segments for primary and aux stitching - keep dqflag name
     active_segs, args.data_quality_flag = get_active_segs(start, end,
                                                           args.data_quality_flag,
+                                                          args.segment_sample_size,
                                                           nproc=args.nproc)
 
     # bandpass primary
@@ -655,11 +670,11 @@ def main(args=None):
             flower, fupper = None
 
         LOGGER.info("-- Loading primary channel data")
-        bandts, total_bandts = get_primary_ts(channel=primary,
-                                              active_segs=active_segs,
-                                              filepath=args.primary_file,
-                                              frametype=args.primary_frametype,
-                                              cache=args.primary_cache, nproc=args.nproc)
+        bandts, total_bandts, primaryts_segs= get_primary_ts(channel=primary,
+                                                             active_segs=active_segs,
+                                                             filepath=args.primary_file,
+                                                             frametype=args.primary_frametype,
+                                                             cache=args.primary_cache, nproc=args.nproc)
         if flower < 0 or fupper >= float((bandts.sample_rate/2.).value):
             raise ValueError(
                 "bandpass frequency is out of range for this "
@@ -701,12 +716,12 @@ def main(args=None):
     else:
         # load primary channel data
         LOGGER.info("-- Loading primary channel data")
-        primaryts, total_primaryts = get_primary_ts(channel=primary,
-                                                    active_segs=active_segs,
-                                                    filepath=args.primary_file,
-                                                    frametype=args.primary_frametype,
-                                                    cache=args.primary_cache,
-                                                    nproc=args.nproc)
+        primaryts, total_primaryts, primaryts_segs = get_primary_ts(channel=primary,
+                                                                    active_segs=active_segs,
+                                                                    filepath=args.primary_file,
+                                                                    frametype=args.primary_frametype,
+                                                                    cache=args.primary_cache,
+                                                                    nproc=args.nproc)
 
     if args.remove_outliers:
         LOGGER.debug(
@@ -850,16 +865,26 @@ def main(args=None):
          bbox_inches='tight')
 
     # Real-Time lasso model
-    zero_list = numpy.where(total_primaryts.value == 0)
     total_modelFit = _descaler(modelFit).copy()
-    for i in zero_list[0]:
-        total_modelFit.insert(i, 0)
+    
+    total_modelFit_padded = None
+    i = 0 # current index in value array
+    for seg in primaryts_segs:
+        data = total_modelFit[i:i+seg[1]]
+        new_times = numpy.linspace(seg[0].start, seg[0].end, seg[1])
+        temp = TimeSeries(data, times=new_times)
+        if total_modelFit_padded is None:
+            total_modelFit_padded = temp.copy()
+        else:
+            total_modelFit_padded.append(temp, pad=0)
+        i += seg[1]
+    
     plot = Plot(figsize=(12, 4.5))
     plot.subplots_adjust(*p1)
     ax = plot.gca(xscale='auto-gps', epoch=start, xlim=total_xlim)
     ax.plot(total_primaryts, label=texify(primary),
             color='black', linewidth=line_size_primary)
-    ax.plot(total_primaryts.times, total_modelFit, label='Real-Time Lasso model',
+    ax.plot(total_modelFit_padded, label='Real-Time Lasso model',
             color=colors[0], linewidth=line_size_aux)
     if range_is_primary:
         ax.set_ylabel('Sensitive range [Mpc]')
@@ -1157,16 +1182,16 @@ def main(args=None):
     caption = None
     data = []
     counter = 0
-    for seg in args.data_quality_flag.active:
+    for seg in primaryts_segs:
         dtype = float(abs(seg)).is_integer() and int or float
         counter = counter + 1
         data.append([
             counter,
-            dtype(seg[0]),
-            dtype(seg[1]),
-            from_gps(seg[0]).strftime('%B %d %Y %H:%M:%S.%f')[:-3],
-            from_gps(seg[1]).strftime('%B %d %Y %H:%M:%S.%f')[:-3],
-            dtype(abs(seg)),
+            dtype(seg[0][0]),
+            dtype(seg[0][1]),
+            from_gps(seg[0][0]).strftime('%B %d %Y %H:%M:%S.%f')[:-3],
+            from_gps(seg[0][1]).strftime('%B %d %Y %H:%M:%S.%f')[:-3],
+            dtype(abs(seg[0])),
         ])
     data_state = "Locked"
     page.h2('Segment information', class_='mt-4')
