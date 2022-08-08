@@ -197,12 +197,12 @@ def _process_channel(input_):
         ax1.plot(primaryts, label=texify(primary), color='black',
                  linewidth=line_size_primary)
         # -- plot vertical dotted lines to visually divide time segments
-        gwplot.plot_seg_lines(active_segs)
+        gwplot.plot_seg_lines(primaryts_segs)
         ax1.set_xlabel(None)
         ax2 = fig.add_subplot(2, 1, 2, sharex=ax1, xlim=xlim)
         ax2.plot(times, auxdata[chan], label=texify(chan), linewidth=line_size_aux)
         # -- plot vertical dotted lines to visually divide time segments
-        gwplot.plot_seg_lines(active_segs)
+        gwplot.plot_seg_lines(primaryts_segs)
         if range_is_primary:
             ax1.set_ylabel('Sensitive range [Mpc]')
         else:
@@ -227,7 +227,7 @@ def _process_channel(input_):
         ax.plot(times, _descaler(tsscaled), label=texify(chan),
                 linewidth=line_size_aux)
         # -- plot vertical dotted lines to visually divide time segments
-        gwplot.plot_seg_lines(active_segs)
+        gwplot.plot_seg_lines(primaryts_segs)
         if range_is_primary:
             ax.set_ylabel('Sensitive range [Mpc]')
         else:
@@ -607,7 +607,7 @@ def main(args=None):
     global line_size_aux, line_size_primary, max_correlated_channels
     global nonzerocoef, nonzerodata, p1, primary, primary_mean, primary_std
     global primaryts, range_is_primary, re_delim, start, target, times
-    global threshold, trend_type, xlim, active_segs
+    global threshold, trend_type, xlim, primaryts_segs
     parser = create_parser()
     args = parser.parse_args(args=args)
 
@@ -843,7 +843,7 @@ def main(args=None):
     ax.plot(times, _descaler(modelFit), label='Lasso model',
             linewidth=line_size_aux)
     # -- plot vertical dotted lines to visually divide time segments
-    gwplot.plot_seg_lines(active_segs)
+    gwplot.plot_seg_lines(primaryts_segs)
     if range_is_primary:
         ax.set_ylabel('Sensitive range [Mpc]')
         ax.set_title('Stitched Lasso Model of Range')
@@ -866,9 +866,8 @@ def main(args=None):
 
     # Real-Time lasso model
     total_modelFit = _descaler(modelFit).copy()
-    
     total_modelFit_padded = None
-    i = 0 # current index in value array
+    i = 0 # current index in data array
     for seg in primaryts_segs:
         data = total_modelFit[i:i+seg[1]]
         new_times = numpy.linspace(seg[0].start, seg[0].end, seg[1])
@@ -878,7 +877,6 @@ def main(args=None):
         else:
             total_modelFit_padded.append(temp, pad=0)
         i += seg[1]
-    
     plot = Plot(figsize=(12, 4.5))
     plot.subplots_adjust(*p1)
     ax = plot.gca(xscale='auto-gps', epoch=start, xlim=total_xlim)
@@ -914,7 +912,7 @@ def main(args=None):
         ax.plot(times, _descaler(summed), label=label, color=colors[i],
                 linewidth=line_size_aux)
         # -- plot vertical dotted lines to visually divide time segments
-        gwplot.plot_seg_lines(active_segs)
+        gwplot.plot_seg_lines(primaryts_segs)
     if range_is_primary:
         ax.set_ylabel('Sensitive range [Mpc]')
     else:
@@ -932,7 +930,7 @@ def main(args=None):
     ax.plot(times, _descaler(target), label=texify(primary),
             color='black', linewidth=line_size_primary)
     # -- plot vertical dotted lines to visually divide time segments
-    gwplot.plot_seg_lines(active_segs)
+    gwplot.plot_seg_lines(primaryts_segs)
     for i, name in enumerate(results['Channel']):
         this = _descaler(scale(nonzerodata[name].value) * nonzerocoef[name])
         if i:
@@ -942,7 +940,7 @@ def main(args=None):
         ax.plot(times, this, label=texify(name), color=colors[i],
                 linewidth=line_size_aux)
         # -- plot vertical dotted lines to visually divide time segments
-        gwplot.plot_seg_lines(active_segs)
+        gwplot.plot_seg_lines(primaryts_segs)
     if range_is_primary:
         ax.set_ylabel('Sensitive range [Mpc]')
     else:
@@ -1183,7 +1181,7 @@ def main(args=None):
     data = []
     counter = 0
     for seg in primaryts_segs:
-        dtype = float(abs(seg)).is_integer() and int or float
+        dtype = float(abs(seg[0])).is_integer() and int or float
         counter = counter + 1
         data.append([
             counter,

@@ -138,7 +138,7 @@ def make_spectrum_plots(start, end, flower, fupper, channel_name,
     return (spectrum_plot_zoomed_out, spectrum_plot_zoomed_in)
 
 
-def plot_seg_lines(active_segments):
+def plot_seg_lines(ts_segments):
     """
     Plot vertical lines distinguishing separate
     segments of data in stitched channel plots
@@ -146,8 +146,8 @@ def plot_seg_lines(active_segments):
     from matplotlib import pyplot
     # amount to shift line because of padding between segments
     shift = 0
-    for i in range(len(active_segments)-1):
-        pyplot.axvline(x=active_segments[i][1]-shift, color='red', linestyle='dashed')
+    for i in range(len(ts_segments)-1):
+        pyplot.axvline(x=ts_segments[i][0][1]-shift, color='red', linestyle='dashed')
         # increase shift by time difference between next segment's start
         # and this segment's end
-        shift += active_segments[i+1][0] - active_segments[i][-1]
+        shift += ts_segments[i+1][0][0] - ts_segments[i][0][-1]
