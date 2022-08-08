@@ -39,7 +39,6 @@ from sklearn.preprocessing import scale
 
 from pandas import set_option
 
-from matplotlib import pyplot as plt
 from matplotlib import (use, rcParams)
 use('Agg')
 
@@ -299,7 +298,7 @@ def get_active_segs(start, end, dq_flag, samples, nproc=1):
             dq_flag = DataQualityFlag.read(dq_flag, verbose=True, nproc=nproc)
         except Exception as e:
             LOGGER.debug("Could not read DataQualityFlag file:", e,
-                  "\nAttempting to query the flag")
+                         "\nAttempting to query the flag")
             read = False
     if not read:
         LOGGER.info(f"Querying data quality flag {dq_flag}")
@@ -310,10 +309,10 @@ def get_active_segs(start, end, dq_flag, samples, nproc=1):
     active_times = [span for span in active_times if span[1] - span[0] > samples]
     # list segs for logger msg
     seg_table = Table(data=([span[0] for span in active_times],
-                          [span[1] for span in active_times]),
-                   names=('Start', 'End'))
+                            [span[1] for span in active_times]),
+                      names=('Start', 'End'))
     LOGGER.debug(f"Identified {len(active_times)} active "
-          f"segments longer than {samples}s:\n\n")
+                 f"segments longer than {samples}s:\n\n")
     print(seg_table)
     print("\n\n")
     return active_times, dq_flag
@@ -331,8 +330,8 @@ def get_primary_ts(channel, active_segs, filepath=None,
     :param frametype: frametype to fetch data from
     :param cache: cache for fetching data
     :param nproc: multiprocessing
-    :return: stitched TimeSeries and padded TimeSeries with each segment, 
-    list of exact timeseries segments timespans and their length
+    :return: stitched TimeSeries and padded TimeSeries with each segment,
+    and list of exact timeseries segments timespans and their length
     """
     # list of ts segs and length pairs
     ts_segs = []
@@ -656,12 +655,6 @@ def main(args=None):
     if args.data_quality_flag == '{IFO}:DMT-ANALYSIS_READY:1':
         args.data_quality_flag = args.data_quality_flag.format(IFO=args.ifo)
 
-    # get active segments for primary and aux stitching - keep dqflag name
-    active_segs, args.data_quality_flag = get_active_segs(start, end,
-                                                          args.data_quality_flag,
-                                                          args.segment_sample_size,
-                                                          nproc=args.nproc)
-
     # bandpass primary
     if args.band_pass:
         try:
@@ -669,12 +662,19 @@ def main(args=None):
         except TypeError:
             flower, fupper = None
 
+        # get active segments with padding
+        active_segs, args.data_quality_flag = get_active_segs(start-pad, end+pad,
+                                                              args.data_quality_flag,
+                                                              args.segment_sample_size,
+                                                              nproc=args.nproc)
+
         LOGGER.info("-- Loading primary channel data")
         bandts, total_bandts, primaryts_segs= get_primary_ts(channel=primary,
                                                              active_segs=active_segs,
                                                              filepath=args.primary_file,
                                                              frametype=args.primary_frametype,
-                                                             cache=args.primary_cache, nproc=args.nproc)
+                                                             cache=args.primary_cache,
+                                                             nproc=args.nproc)
         if flower < 0 or fupper >= float((bandts.sample_rate/2.).value):
             raise ValueError(
                 "bandpass frequency is out of range for this "
@@ -714,6 +714,11 @@ def main(args=None):
         spectrum_plot_zoomed_in = spectrum_plots[1]
 
     else:
+        # get active segments for primary and aux stitching
+        active_segs, args.data_quality_flag = get_active_segs(start, end,
+                                                              args.data_quality_flag,
+                                                              args.segment_sample_size,
+                                                              nproc=args.nproc)
         # load primary channel data
         LOGGER.info("-- Loading primary channel data")
         primaryts, total_primaryts, primaryts_segs = get_primary_ts(channel=primary,
