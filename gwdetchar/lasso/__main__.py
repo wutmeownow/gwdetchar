@@ -277,6 +277,53 @@ def _process_channel(input_):
     return (chan, lassocoef, plot4, plot5, plot6, ts)
 
 
+def crop_seg_list(seg_list, start, end):
+    """
+    Crop a ordered list of segments to new start and end
+
+    :param seg_list: segment list to crop
+    :param start: start time in gps
+    :param end: end time in gps
+    :return: cropped segment list
+    """
+
+    # check for valid start and end
+    if start == end:
+        raise ValueError("given start and end are the same")
+    if start > end:
+        raise ValueError("given start is after given end")
+    if start >= seg_list[-1].end:
+        raise ValueError("segments end before given start")
+    if end <= seg_list[0].start:
+        raise ValueError("given end is before start of segments")
+
+    # index of new starting segment as in old segment list
+    cropped_start = None
+
+    for i in range(len(seg_list)):
+        # crop start
+        if (cropped_start is None) and (start < seg_list[i].end):
+            # end is in this segment
+            if not start <= seg_list[i].start:
+                seg_list[i] = Segment(start, seg_list[i].end)
+            seg_list = seg_list[i:]
+            cropped_start = i
+
+        # crop end
+        if cropped_start is not None:
+            # go backwards in cropped seg_list to crop end
+            # e.g. j = 2, 1, 0
+            j = len(seg_list)-(i-cropped_start+1)
+            # end is after start of this segment
+            if end > seg_list[j].start:
+                # end is in this segment
+                if not end >= seg_list[j].end:
+                    seg_list[j] = Segment(seg_list[j].start, end)
+                seg_list = seg_list[:j+1]
+                break
+    return seg_list
+
+
 def get_active_segs(start, end, dq_flag, samples, nproc=1):
     """
     Get active flag segments for the ifo,
@@ -296,6 +343,9 @@ def get_active_segs(start, end, dq_flag, samples, nproc=1):
         try:
             LOGGER.info("Reading DataQualityFlag file")
             dq_flag = DataQualityFlag.read(dq_flag, verbose=True, nproc=nproc)
+            # crop read in dataqualityflag to start and end
+            dq_flag.known = crop_seg_list(dq_flag.known, start, end)
+            dq_flag.active = crop_seg_list(dq_flag.active, start, end)
         except Exception as e:
             LOGGER.debug("Could not read DataQualityFlag file:", e,
                          "\nAttempting to query the flag")
