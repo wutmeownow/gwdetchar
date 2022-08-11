@@ -813,7 +813,7 @@ def main(args=None):
     # read aux channels
     auxdata = get_aux_data(channels, frametype, active_segs, nproc=args.nproc)
 
-    # -- removes flat data to be re-introdused later
+    # -- removes flat data to be re-introduced later
 
     LOGGER.info('-- Pre-processing auxiliary channel data')
 
@@ -831,6 +831,15 @@ def main(args=None):
     nafter = len(auxdata)
     LOGGER.debug('Removed {0} channels with bad data'.format(nbefore - nafter))
     LOGGER.debug('{0} channels remaining'.format(nafter))
+
+    # -- remove aux channels shorter than primary
+
+    LOGGER.info("Removing any channels of unequal size...")
+    auxdata, unequal = gwlasso.remove_unequal(auxdata, primaryts.size)
+    unequaltable = Table(data=(list(unequal.keys()),),
+                         names=('Channels',))
+    LOGGER.debug('Removed {0} channels of unequal size'.format(len(unequaltable)))
+    LOGGER.debug('{0} channels remaining'.format(len(auxdata)))
     data = numpy.array([scale(ts.value) for ts in auxdata.values()]).T
 
     # -- perform lasso regression -------------------
@@ -875,6 +884,8 @@ def main(args=None):
     zeroed.write(zerofile, format='csv', overwrite=True)
     flatfile = '%s-FLAT_CHANNELS-%s.csv' % (args.ifo, gpsstub)
     flatable.write(flatfile, format='csv', overwrite=True)
+    unequalfile = '%s-UNEQUAL_CHANNELS-%s.csv' % (args.ifo, gpsstub)
+    unequaltable.write(unequalfile, format='csv', overwrite=True)
 
     # -- generate lasso plots
 
@@ -1077,7 +1088,8 @@ def main(args=None):
     files = [
         ('%s analyzed channels (CSV)' % nchan, channelsfile),
         ('%s flat channels (CSV)' % len(flatable), flatfile),
-        ('%s zeroed channels (CSV)' % len(zeroed), zerofile)]
+        ('%s zeroed channels (CSV)' % len(zeroed), zerofile),
+        ('%s unequal channels (CSV)' % len(unequaltable), unequalfile)]
     page.div(class_='col-md-3 col-sm-12')
     page.add(htmlio.download_btn(
         files, label='Channel information',

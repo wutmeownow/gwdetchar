@@ -205,3 +205,16 @@ def remove_bad(tsdict):
         if numpy.isnan(series).any() or numpy.isinf(series).any():
             outdict.pop(key)
     return outdict
+
+
+def remove_unequal(tsdict, size):
+    """Remove `TimeSeries` that do not have a length 'size' in
+    a `TimeSeriesDict` and return a separate dictionary containing them
+    """
+    outdict = tsdict.copy()
+    unequal = {}
+    for key in tsdict.keys():
+        if len(outdict[key]) != size:
+            # pop into unequal dict
+            unequal[key] = outdict.pop(key)
+    return outdict, unequal

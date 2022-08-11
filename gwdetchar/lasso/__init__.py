@@ -31,4 +31,5 @@ from .core import (
     find_alpha,
     remove_flat,
     remove_bad,
+    remove_unequal,
 )
