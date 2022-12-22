@@ -118,7 +118,9 @@ def _generate_cluster(input_):
             # plot
             fig = Plot(figsize=(12, 4))
             fig.subplots_adjust(*p7)
-            ax = fig.gca(xscale='auto-gps')
+            # ax = fig.gca(xscale='auto-gps')
+            ax = fig.gca()
+            ax.xscale = 'auto-gps'
             ax.plot(
                 times, scale(currentts.value)*numpy.sign(input_[1][1]),
                 label=texify(currentchan), linewidth=line_size_aux,
@@ -220,7 +222,11 @@ def _process_channel(input_):
             tsscaled = numpy.negative(tsscaled)
         fig = Plot(figsize=(12, 4))
         fig.subplots_adjust(*p1)
-        ax = fig.gca(xscale='auto-gps', epoch=start, xlim=xlim)
+        # ax = fig.gca(xscale='auto-gps', epoch=start, xlim=xlim)
+        ax = fig.gca()
+        ax.xscale = 'auto-gps'
+        ax.epoch = start
+        ax.xlim = xlim
         ax.plot(times, _descaler(target), label=texify(primary),
                 color='black', linewidth=line_size_primary)
         ax.plot(times, _descaler(tsscaled), label=texify(chan),
@@ -304,7 +310,7 @@ def crop_seg_list(seg_list, start, end):
         # crop start
         if (cropped_start is None) and (start < seg_list[i].end):
             # end is in this segment
-            if not start <= seg_list[i].start:
+            if not (start <= seg_list[i].start):
                 seg_list[i] = Segment(start, seg_list[i].end)
             seg_list = seg_list[i:]
             cropped_start = i
@@ -903,7 +909,11 @@ def main(args=None):
 
     plot = Plot(figsize=(12, 4))
     plot.subplots_adjust(*p1)
-    ax = plot.gca(xscale='auto-gps', epoch=start, xlim=xlim)
+    ax = plot.gca()
+    ax.xscale = 'auto-gps'
+    ax.epoch = start
+    ax.xlim = xlim
+
     ax.plot(times, _descaler(target), label=texify(primary),
             color='black', linewidth=line_size_primary)
     ax.plot(times, _descaler(modelFit), label='Lasso model',
@@ -921,8 +931,10 @@ def main(args=None):
     ax = plot.gca().xaxis
     labels[ax] = ax.get_label_text()
     trans = ax.get_transform()
-    epoch = float(trans.get_epoch())
-    unit = trans.get_unit_name()
+    # epoch = float(trans.get_epoch())
+    epoch = float(start)
+    # unit = trans.get_unit_name()
+    unit = primaryts.unit
     iso = Time(epoch, format='gps', scale='utc').iso
     utc = iso.rstrip('0').rstrip('.')
     ax.set_label_text('Stitched Time [{0!s}] from {1!s} UTC ({2!r})'.format(unit, utc, epoch))
@@ -945,7 +957,11 @@ def main(args=None):
         i += seg[1]
     plot = Plot(figsize=(12, 4.5))
     plot.subplots_adjust(*p1)
-    ax = plot.gca(xscale='auto-gps', epoch=start, xlim=total_xlim)
+    # ax = plot.gca(xscale='auto-gps', epoch=start, xlim=total_xlim)
+    ax = plot.gca()
+    ax.xscale = 'auto-gps'
+    ax.epoch = start
+    ax.xlim = total_xlim
     ax.plot(total_primaryts, label=texify(primary),
             color='black', linewidth=line_size_primary)
     ax.plot(total_modelFit_padded, label='Real-Time Lasso model',
@@ -965,7 +981,11 @@ def main(args=None):
     # summed contributions
     plot = Plot(figsize=(12, 4))
     plot.subplots_adjust(*p1)
-    ax = plot.gca(xscale='auto-gps', epoch=start, xlim=xlim)
+    # ax = plot.gca(xscale='auto-gps', epoch=start, xlim=xlim)
+    ax = plot.gca()
+    ax.xscale = 'auto-gps'
+    ax.epoch = start
+    ax.xlim = xlim
     ax.plot(times, _descaler(target), label=texify(primary),
             color='black', linewidth=line_size_primary)
     summed = 0
@@ -992,7 +1012,11 @@ def main(args=None):
     # individual contributions
     plot = Plot(figsize=(12, 4))
     plot.subplots_adjust(*p1)
-    ax = plot.gca(xscale='auto-gps', epoch=start, xlim=xlim)
+    # ax = plot.gca(xscale='auto-gps', epoch=start, xlim=xlim)
+    ax = plot.gca()
+    ax.xscale = 'auto-gps'
+    ax.epoch = start
+    ax.xlim = xlim
     ax.plot(times, _descaler(target), label=texify(primary),
             color='black', linewidth=line_size_primary)
     # -- plot vertical dotted lines to visually divide time segments
